@@ -4,10 +4,10 @@ import dotenv from 'dotenv';
 import { createConnection } from './config/db.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/auth.js';
-// import expenseRoutes from './routes/expenses.js';
-// import categoryRoutes from './routes/categories.js';
-// import userRoutes from './routes/users.js';
-// import reportRoutes from './routes/reports.js';
+import expenseRoutes from './routes/expenses.js';
+import categoryRoutes from './routes/categories.js';
+import userRoutes from './routes/user.js';
+import reportRoutes from './routes/reports.js';
 // import { errorHandler } from './middleware/errorHandler.js';
 
 // Load environment variables
@@ -27,10 +27,10 @@ createConnection();
 
 // Routes
 app.use('/api/auth', authRoutes);
-// app.use('/api/expenses', expenseRoutes);
-// app.use('/api/categories', categoryRoutes);
-// app.use('/api/users', userRoutes);
-// app.use('/api/reports', reportRoutes);
+app.use('/api/expenses', expenseRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -51,3 +51,6 @@ process.on('unhandledRejection', (err) => {
   console.log(err.name, err.message);
   process.exit(1);
 });
+
+// Use This if nodemon is not working
+//  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass

@@ -29,7 +29,8 @@ export async function createConnection() {
     // await insertUsers(connection);
     // await deleteAllUsers(connection);
     // await getCategories(connection);
-    await getAllUsers(connection);
+    // await getAllUsers(connection);
+    await createExpensesTable(connection);
 
     connection.release();
     return pool;
@@ -58,7 +59,8 @@ async function createUsersTable(connection) {
   await connection.query(`
     CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL,
+      first_name VARCHAR(100) NOT NULL,
+      last_name VARCHAR(100) NOT NULL,
       email VARCHAR(100) NOT NULL UNIQUE,
       phone VARCHAR(20),
       password VARCHAR(100) NOT NULL,
@@ -114,7 +116,7 @@ async function createExpensesTable(connection) {
       title VARCHAR(100) NOT NULL,
       amount DECIMAL(10, 2) NOT NULL,
       payment_date DATE NOT NULL,
-      payment_method ENUM('cash', 'credit_card', 'debit_card', 'bank_transfer', 'other') DEFAULT 'cash',
+      payment_method ENUM('cash', 'credit_card', 'debit_card', 'bank_transfer', 'other', 'UPI') DEFAULT 'cash',
       notes TEXT,
       category_id INT NOT NULL,
       user_id INT NOT NULL,
