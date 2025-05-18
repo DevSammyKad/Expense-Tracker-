@@ -30,7 +30,9 @@ export async function createConnection() {
     // await deleteAllUsers(connection);
     // await getCategories(connection);
     // await getAllUsers(connection);
-    await createExpensesTable(connection);
+    // await createExpensesTable(connection);
+
+    // await readDatabase(connection);
 
     connection.release();
     return pool;
@@ -162,6 +164,124 @@ async function getCategories(connection) {
   const [categories] = await connection.query('SELECT * FROM categories');
   console.log('Categories table retrieved', categories);
   return categories;
+}
+
+async function readDatabase(connection) {
+  try {
+    // 1. Get all table names
+    const [tables] = await connection.query(`
+      SELECT TABLE_NAME
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_SCHEMA = 'expense_tracker';
+    `);
+    console.log(
+      'Tables retrieved:',
+      tables.map((t) => t.TABLE_NAME)
+    );
+
+    // 2. Initialize result array
+    const schemaDetails = [];
+
+    // 3. For each table, fetch columns, constraints, and indexes
+    for (const { TABLE_NAME } of tables) {
+      const tableDetails = {
+        tableName: TABLE_NAME,
+        columns: [],
+        constraints: [],
+        indexes: [],
+      };
+
+      // 4. Get column details
+      const [columns] = await connection.query(
+        `
+        SELECT 
+          COLUMN_NAME,
+          DATA_TYPE,
+          CHARACTER_MAXIMUM_LENGTH,
+          IS_NULLABLE,
+          COLUMN_DEFAULT,
+          COLUMN_KEY,
+          EXTRA
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'expense_tracker' 
+          AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION;
+      `,
+        [TABLE_NAME]
+      );
+
+      tableDetails.columns = columns.map((col) => ({
+        name: col.COLUMN_NAME,
+        dataType: col.DATA_TYPE,
+        maxLength: col.CHARACTER_MAXIMUM_LENGTH,
+        isNullable: col.IS_NULLABLE === 'YES',
+        defaultValue: col.COLUMN_DEFAULT,
+        isPrimaryKey: col.COLUMN_KEY === 'PRI',
+        isAutoIncrement: col.EXTRA.includes('auto_increment'),
+      }));
+
+      // 5. Get constraints (primary and foreign keys)
+      const [constraints] = await connection.query(
+        `
+        SELECT 
+          tc.TABLE_NAME,
+          tc.CONSTRAINT_NAME,
+          tc.CONSTRAINT_TYPE,
+          kcu.COLUMN_NAME,
+          kcu.REFERENCED_TABLE_NAME,
+          kcu.REFERENCED_COLUMN_NAME
+        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+        LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+          ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+          AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+        WHERE tc.TABLE_SCHEMA = 'expense_tracker'
+          AND tc.TABLE_NAME = ?
+          AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'FOREIGN KEY');
+      `,
+        [TABLE_NAME]
+      );
+
+      tableDetails.constraints = constraints.map((con) => ({
+        constraintName: con.CONSTRAINT_NAME,
+        constraintType: con.CONSTRAINT_TYPE,
+        columnName: con.COLUMN_NAME,
+        referencedTable: con.REFERENCED_TABLE_NAME,
+        referencedColumn: con.REFERENCED_COLUMN_NAME,
+      }));
+
+      // 6. Get indexes
+      const [indexes] = await connection.query(
+        `
+        SELECT 
+          INDEX_NAME,
+          COLUMN_NAME,
+          NON_UNIQUE
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = 'expense_tracker'
+          AND TABLE_NAME = ?
+        ORDER BY INDEX_NAME;
+      `,
+        [TABLE_NAME]
+      );
+
+      tableDetails.indexes = indexes.map((idx) => ({
+        indexName: idx.INDEX_NAME,
+        columnName: idx.COLUMN_NAME,
+        isUnique: idx.NON_UNIQUE === 0,
+      }));
+
+      schemaDetails.push(tableDetails);
+    }
+
+    // 7. Pretty-print the full schema details
+    console.log('Schema details retrieved:');
+    console.log(JSON.stringify(schemaDetails, null, 2));
+
+    return schemaDetails;
+  } catch (error) {
+    console.error('Error retrieving schema:', error);
+    throw error;
+  }
 }
 
 export function getPool() {

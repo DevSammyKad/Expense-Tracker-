@@ -1,13 +1,13 @@
 import express from 'express';
 
 import { authenticate } from '../middleware/auth.js';
-import { getDailyReport, getMonthlyReport } from '../controllers/reports.js';
+import { createAds, getAds } from '../controllers/ads.js';
 
 const router = express.Router();
 
 router.use(authenticate);
 
-router.get('/monthly', getMonthlyReport);
-router.get('/daily', getDailyReport);
+router.get('/', getAds);
+router.post('/', createAds);
 
 export default router;

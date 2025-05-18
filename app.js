@@ -8,6 +8,7 @@ import expenseRoutes from './routes/expenses.js';
 import categoryRoutes from './routes/categories.js';
 import userRoutes from './routes/user.js';
 import reportRoutes from './routes/reports.js';
+import adRoutes from './routes/ads.js';
 // import { errorHandler } from './middleware/errorHandler.js';
 
 // Load environment variables
@@ -31,6 +32,7 @@ app.use('/api/expenses', expenseRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/ads', adRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

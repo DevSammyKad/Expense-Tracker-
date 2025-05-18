@@ -4,9 +4,286 @@ import { generateToken } from '../utils/jwt.js';
 import { catchAsync, AppError } from '../middleware/errorHandler.js';
 import dotenv from 'dotenv';
 import { sendResetEmail } from '../utils/nodemailer.js';
+import { JwksClient } from 'jwks-rsa';
+import jwt from 'jsonwebtoken';
+import axios from 'axios';
+
+const appleClient = new JwksClient({
+  jwksUri: 'https://appleid.apple.com/auth/keys',
+});
+
+async function getAppleSigningKey(kid) {
+  try {
+    const key = await appleClient.getSigningKey(kid);
+    return key.getPublicKey();
+  } catch (err) {
+    throw new AppError('Failed to fetch Apple signing key', 400);
+  }
+}
 
 dotenv.config();
 const SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10');
+
+export const appleLogin = catchAsync(async (req, res) => {
+  const { id_token } = req.body;
+
+  if (!id_token) {
+    throw new AppError('Apple ID token is required', 400);
+  }
+
+  // Decode the token to get the header
+  let decoded;
+  try {
+    decoded = jwt.decode(id_token, { complete: true });
+  } catch (err) {
+    throw new AppError('Invalid Apple ID token', 400);
+  }
+
+  if (!decoded || !decoded.header) {
+    throw new AppError('Invalid Apple ID token structure', 400);
+  }
+
+  const { header } = decoded;
+  const kid = header.kid;
+
+  try {
+    const publicKey = await getAppleSigningKey(kid);
+    // Verify the token with Apple's public key
+    const verifiedToken = jwt.verify(id_token, publicKey, {
+      algorithms: ['RS256'],
+      audience: process.env.APPLE_CLIENT_ID, // Your Apple service ID
+      issuer: 'https://appleid.apple.com',
+    });
+
+    // Token is valid - proceed with your login logic
+    // Extract user info from verifiedToken (email, sub, etc.)
+    const appleId = verifiedToken.sub;
+    const email = verifiedToken.email;
+
+    // Your existing user handling logic here...
+    // Check if user exists, create if not, generate session, etc.
+
+    res.status(200).json({
+      success: true,
+      data: {
+        appleId,
+        email,
+        // Include any other user data you want to return
+      },
+    });
+  } catch (err) {
+    throw new AppError(`Apple authentication failed: ${err.message}`, 401);
+  }
+});
+
+export const googleLogin = catchAsync(async (req, res) => {
+  try {
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid token or provider.',
+      });
+    }
+
+    let userInfo = {};
+    let providerIdField = ''; // Either "google_id" or "facebook_id"
+
+    // Token Verification and Data Extraction
+
+    const response = await axios.get(
+      ` https://www.googleapis.com/oauth2/v3/userinfo?access_token=${token}`
+    );
+    console.log('response-->', response.data);
+
+    userInfo.email = response.data.email;
+    userInfo.providerId = response.data.sub;
+    providerIdField = 'google_id';
+
+    // Find User by Email
+    let user = await UserRegistration.findOne({
+      where: { email: userInfo.email },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found. Please sign up manually first.',
+      });
+    }
+
+    // First Time Social Login - Save ID
+    if (!user[providerIdField]) {
+      user[providerIdField] = userInfo.providerId;
+      await user.save();
+    }
+
+    // Match Provider ID
+    if (user[providerIdField] !== userInfo.providerId) {
+      return res.status(401).json({
+        success: false,
+        message: ` ${provider} account does not match our records`,
+      });
+    }
+
+    // Generate JWT Token
+    const jwtToken = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Login successful via social login',
+      token: jwtToken,
+    });
+  } catch (error) {
+    console.error('❌ Social Login Error:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.',
+    });
+  }
+});
+
+export const GoogleAndAppleLogin = catchAsync(async (req, res) => {
+  const { provider, response } = req.body;
+
+  if (!provider || !response) {
+    throw new AppError('Provider and response are required', 400);
+  }
+
+  if (provider === 'apple') {
+    const { identityToken } = response;
+
+    if (!identityToken || typeof identityToken !== 'string') {
+      console.log('Invalid identityToken:', identityToken);
+      throw new AppError('Apple identity token is missing or invalid', 400);
+    }
+    console.log('Received identityToken:', identityToken);
+    if (identityToken.split('.').length !== 3) {
+      console.log('Token parts:', identityToken.split('.'));
+      throw new AppError('Invalid Apple token format', 400);
+    }
+
+    const decoded = jwt.decode(identityToken, { complete: true });
+    if (!decoded || !decoded.header || !decoded.header.kid) {
+      throw new AppError('Invalid Apple token header', 400);
+    }
+
+    const kid = decoded.header.kid;
+
+    let key;
+    try {
+      key = await getAppleSigningKey(kid);
+    } catch (err) {
+      throw new AppError('Failed to fetch Apple signing key', 400);
+    }
+
+    let payload;
+    try {
+      payload = jwt.verify(identityToken, key, { algorithms: ['RS256'] });
+    } catch (err) {
+      throw new AppError('Apple token verification failed', 401);
+    }
+
+    const userId = payload.sub;
+    const email = payload.email;
+
+    const token = generateToken({ id: userId, email });
+
+    return res.status(200).json({
+      success: true,
+      token,
+      user: { id: userId, email },
+    });
+  } else if (provider === 'google') {
+    const { idToken } = response;
+
+    if (!idToken || typeof idToken !== 'string') {
+      console.log('Invalid idToken:', idToken);
+      throw new AppError('Google ID token is missing or invalid', 400);
+    }
+
+    console.log('Received Google idToken:', idToken); // Log the received token
+
+    // Verify the Google ID token
+    try {
+      const response = await axios.get(
+        'https://www.googleapis.com/oauth2/v3/tokeninfo',
+        {
+          params: { id_token: idToken },
+        }
+      );
+
+      const payload = response.data;
+      console.log('Google tokeninfo payload:', payload); // Log the tokeninfo response
+      console.log('Expected GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID);
+      console.log('Received aud:', payload.aud);
+
+      // Verify the audience (client ID)
+      if (payload.aud !== process.env.GOOGLE_CLIENT_ID) {
+        throw new AppError(
+          `Google token audience mismatch. Expected: ${process.env.GOOGLE_CLIENT_ID}, Received: ${payload.aud}`,
+          401
+        );
+      }
+
+      // Verify token is not expired
+      const currentTime = Math.floor(Date.now() / 1000);
+      if (payload.exp < currentTime) {
+        throw new AppError('Google token has expired', 401);
+      }
+
+      const userId = payload.sub; // Google's unique user ID
+      const email = payload.email;
+
+      // Optionally, check if user exists in your database or create a new user
+      const pool = getPool();
+      let user;
+      try {
+        const { rows } = await pool.query(
+          'SELECT * FROM users WHERE google_id = $1 OR email = $2',
+          [userId, email]
+        );
+        user = rows[0];
+
+        if (!user) {
+          // Create a new user if they don't exist
+          const { rows: newUser } = await pool.query(
+            'INSERT INTO users (google_id, email, created_at) VALUES ($1, $2, NOW()) RETURNING *',
+            [userId, email]
+          );
+          user = newUser[0];
+        }
+      } catch (err) {
+        console.error('Database error:', err);
+        throw new AppError('Failed to process user data', 500);
+      }
+
+      // Generate JWT token
+      const token = generateToken({ id: userId, email });
+
+      return res.status(200).json({
+        success: true,
+        token,
+        user: { id: userId, email },
+      });
+    } catch (err) {
+      console.error('Google token verification failed:', err);
+      throw new AppError(
+        `Google token verification failed: ${err.message}`,
+        401
+      );
+    }
+  }
+
+  throw new AppError('Unsupported provider', 400);
+});
 
 export const register = catchAsync(async (req, res) => {
   const { first_name, last_name, email, phone, password, confirmPassword } =
@@ -163,19 +440,6 @@ export const forgotPassword = catchAsync(async (req, res) => {
 });
 
 // In a real application, send an email with reset link
-// For this demo, we'll just return the token
-
-//   res.status(200).json({
-//     success: true,
-//     message:
-//       'If your email is registered, you will receive a password reset link',
-//     // In a real app, don't return the token in the response
-//     // Only for demonstration purposes
-//     devInfo: {
-//       resetToken,
-//     },
-//   });
-// });
 
 export const resetPassword = catchAsync(async (req, res) => {
   const { token, password, confirmPassword } = req.body;
